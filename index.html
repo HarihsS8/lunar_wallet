@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+<head>
+    const BASE_CHAIN_ID = "0x2105";
+    const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+    const DECIMALS = { ETH: 18, USDC: 6 };
+    const balances = { ETH: 0n, USDC: 0n };
+    const activity = [];
+    let walletAddress = null;
+    let chainId = null;
+    let ethPrice = null;
+    let agentConfigured = false;
+      color-scheme: light;
+      --ink: #192720;
+      --muted: #77827a;
+    function formatUnits(raw, decimals) {
+      const base = 10n ** BigInt(decimals);
+      const whole = raw / base;
+      const fraction = (raw % base).toString().padStart(decimals, "0").replace(/0+$/, "");
+      return fraction ? `${whole}.${fraction}` : whole.toString();
+    }
+    function decimalToUnits(value, decimals) {
+      const normalized = String(value).trim();
+      if (!/^\d+(?:\.\d+)?$/.test(normalized)) throw new Error("Enter a valid decimal amount.");
+      const [whole, fraction = ""] = normalized.split(".");
+      if (fraction.length > decimals) throw new Error(`This asset supports at most ${decimals} decimal places.`);
+      return BigInt(whole + fraction.padEnd(decimals, "0"));
+    }
+    function formatQuantity(raw, symbol) {
+      const amount = Number(formatUnits(raw, DECIMALS[symbol]));
+      return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: symbol === "USDC" ? 2 : 6 }).format(amount)} ${symbol}`;
+    }
+    function shortAddress(address) { return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Not connected"; }
+    function isValidAddress(address) { return /^0x[a-fA-F0-9]{40}$/.test(address); }
+    function isOnBase() { return chainId?.toLowerCase() === BASE_CHAIN_ID; }
+
+      --white: #fff;
+      --forest: #14251f;
+      --forest-soft: #21372e;
+      --lime: #c8f078;
+      --lime-dark: #a7d956;
+      --orange: #f2a678;
+      --blue: #87b6d7;
+      --radius: 12px;
+      font-family: "DM Sans", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 236px minmax(0, 1fr); }
+    .sidebar { background: var(--forest); color: #fff; display: flex; flex-direction: column; padding: 26px 16px 18px; min-height: 100vh; }
+    .brand { display: flex; gap: 11px; align-items: center; padding: 0 10px; font: 600 19px "Space Grotesk", sans-serif; letter-spacing: 0; }
+    .brand-mark { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--forest); background: var(--lime); font-size: 18px; }
+    .workspace-label { margin: 43px 10px 12px; color: #83948a; text-transform: uppercase; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
+    .nav { display: grid; gap: 4px; }
+    .nav button { height: 42px; display: flex; align-items: center; gap: 12px; color: #b9c5bd; background: transparent; border: 0; border-radius: 8px; padding: 0 11px; text-align: left; font-size: 13px; }
+    .nav button.active { background: #2a4035; color: #fff; }
+    .nav-icon { width: 18px; text-align: center; font-size: 16px; }
+    .nav-count { margin-left: auto; color: var(--lime); font-size: 11px; }
+    .sidebar-spacer { flex: 1; min-height: 70px; }
+    .agent-status { padding: 14px; background: #21372e; border: 1px solid #334a3e; border-radius: 10px; }
+    .agent-status-top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; }
+    .status-dot { width: 7px; height: 7px; display: inline-block; margin-right: 6px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 0 3px #c8f07820; }
+    .agent-status p { margin: 8px 0 12px; color: #a5b2aa; font-size: 11px; line-height: 1.55; }
+    .status-link { padding: 0; border: 0; background: none; color: var(--lime); font-size: 11px; font-weight: 600; }
+    .profile { display: flex; align-items: center; gap: 10px; padding: 18px 8px 0; margin-top: 16px; border-top: 1px solid #304238; }
+    .avatar { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 50%; background: #f0b48c; color: #3a2b20; font-size: 12px; font-weight: 700; }
+    .profile-name { font-size: 12px; font-weight: 600; }
+    .profile-role { margin-top: 3px; color: #9eaaa2; font-size: 10px; }
+    main { min-width: 0; }
+    .topbar { height: 70px; display: flex; align-items: center; justify-content: space-between; padding: 0 38px; border-bottom: 1px solid var(--line); background: #ffffffa8; }
+    .crumb { color: var(--muted); font-size: 12px; }
+    .crumb strong { color: var(--ink); font-weight: 600; }
+    .top-actions { display: flex; gap: 11px; align-items: center; }
+    .network { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 7px; background: white; padding: 8px 10px; color: #546159; font-size: 11px; }
+    .network-mark { width: 9px; height: 9px; border-radius: 50%; background: #89bdf1; }
+    .icon-button { position: relative; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; color: #58645c; background: white; font-size: 16px; }
+    .icon-button .ping { position: absolute; width: 6px; height: 6px; top: 6px; right: 6px; border-radius: 50%; background: #ef9b70; }
+    .content { width: min(1180px, 100%); margin: auto; padding: 34px 38px 44px; }
+    .page-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 24px; }
+    .eyebrow { margin: 0 0 7px; color: #768279; font-size: 11px; font-weight: 600; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 5px; font: 600 28px "Space Grotesk", sans-serif; }
+    .subtitle { margin: 0; color: var(--muted); font-size: 12px; }
+    .heading-actions { display: flex; gap: 9px; }
+    .button { min-height: 37px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 7px; border: 1px solid var(--line); background: white; color: var(--ink); padding: 0 13px; font-size: 12px; font-weight: 600; transition: transform .15s, background .15s; }
+    .button:hover { transform: translateY(-1px); background: #f8faf6; }
+    .button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+    .button-primary { border-color: var(--lime); background: var(--lime); }
+    .button-primary:hover { background: var(--lime-dark); }
+    .security-banner { display: flex; align-items: center; gap: 9px; padding: 10px 13px; margin-bottom: 17px; border: 1px solid #ead8c3; border-radius: 8px; background: #fbf4e9; color: #785b39; font-size: 11px; }
+    .security-banner strong { color: #563f27; }
+    .overview-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(260px, .9fr); gap: 16px; margin-bottom: 17px; }
+    .balance-card { min-height: 202px; position: relative; overflow: hidden; padding: 23px 25px; border-radius: var(--radius); color: white; background: var(--forest); }
+    .balance-card::after { content: ""; position: absolute; width: 220px; height: 220px; right: -64px; top: -100px; border: 1px solid #c8f07820; border-radius: 50%; box-shadow: 0 0 0 23px #c8f0780d, 0 0 0 48px #c8f07809; pointer-events: none; }
+    .balance-label { display: flex; align-items: center; gap: 8px; color: #b7c5bb; font-size: 11px; }
+    .balance-label button { display: grid; place-items: center; width: 20px; height: 20px; border: 0; color: #bdc9c0; background: transparent; }
+    .balance-value { margin: 10px 0 8px; font: 600 34px "Space Grotesk", sans-serif; letter-spacing: 0; }
+    .balance-change { color: #c8f078; font-size: 11px; }
+    .balance-change span { margin-left: 5px; color: #aab8ae; }
+    .balance-bottom { position: absolute; left: 25px; right: 25px; bottom: 19px; display: flex; justify-content: space-between; color: #aab8ae; font-size: 10px; }
+    .agent-card { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: white; }
+    .card-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .card-heading h2 { margin: 0; font: 600 14px "Space Grotesk", sans-serif; }
+    .agent-tag { display: inline-flex; align-items: center; gap: 5px; color: #58763b; font-size: 10px; font-weight: 600; }
+    .agent-tag .status-dot { width: 6px; height: 6px; margin: 0; box-shadow: none; }
+    .agent-card > p { margin: 9px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .policy-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 11px; }
+    .policy-row span:first-child { color: #6f7b72; }
+    .policy-row strong { text-align: right; font-size: 10px; font-weight: 600; }
+    .section-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 11px; }
+    .section-heading h2 { margin: 0; font: 600 15px "Space Grotesk", sans-serif; }
+    .text-button { border: 0; padding: 5px 0; background: transparent; color: #688b43; font-size: 11px; font-weight: 600; }
+    .assets-section { margin-bottom: 22px; }
+    .asset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    .asset-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+    .asset-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .coin { width: 35px; height: 35px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 50%; font: 600 12px "Space Grotesk", sans-serif; }
+    .coin-usdc { background: #e6f1fa; color: #3983b9; }
+    .coin-eth { background: #eeeafa; color: #7764af; }
+    .asset-name { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .asset-symbol { margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .asset-amount { text-align: right; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .asset-price { margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 400; }
+    .lower-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, .8fr); gap: 16px; }
+    .activity-panel, .copilot-panel { border: 1px solid var(--line); border-radius: var(--radius); background: white; }
+    .activity-panel { min-width: 0; padding: 18px 19px 4px; }
+    .activity-controls { display: flex; align-items: center; gap: 9px; }
+    .filter-select { padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #59655c; font-size: 10px; }
+    .activity-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 59px; border-top: 1px solid #edf0eb; }
+    .activity-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: #657568; background: #f0f3ee; font-size: 13px; }
+    .activity-title { overflow: hidden; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .activity-meta { margin-top: 4px; color: var(--muted); font-size: 9px; }
+    .activity-amount { text-align: right; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .activity-amount.incoming { color: #5a8c3c; }
+    .activity-amount.pending { color: #ae7954; }
+    .activity-empty { padding: 24px 0; color: var(--muted); text-align: center; font-size: 11px; }
+    .copilot-panel { display: flex; flex-direction: column; min-height: 330px; padding: 18px; }
+    .copilot-title { display: flex; align-items: center; gap: 9px; }
+    .copilot-mark { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 8px; background: var(--forest); color: var(--lime); font-size: 15px; }
+    .copilot-title h2 { margin: 0; font: 600 14px "Space Grotesk", sans-serif; }
+    .copilot-title small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+    .chat-log { display: flex; flex: 1; flex-direction: column; gap: 10px; padding: 17px 0 11px; }
+    .message { max-width: 94%; padding: 10px 11px; border-radius: 9px; background: #f2f5ef; color: #536057; font-size: 10px; line-height: 1.55; }
+    .message.user { align-self: flex-end; background: #e8f3d8; color: #40522c; }
+    .message strong { color: var(--ink); }
+    .chat-form { display: flex; gap: 7px; padding-top: 10px; border-top: 1px solid var(--line); }
+    .chat-form input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--ink); font-size: 10px; }
+    .chat-form input::placeholder { color: #9aa49b; }
+    .send-chat { width: 29px; height: 29px; flex: 0 0 auto; border: 0; border-radius: 7px; background: var(--forest); color: var(--lime); }
+    .toast { position: fixed; z-index: 10; right: 22px; bottom: 20px; max-width: calc(100vw - 40px); padding: 12px 16px; border-radius: 8px; background: var(--forest); color: white; box-shadow: 0 8px 25px #17231e30; font-size: 12px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .2s, transform .2s; }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+    dialog { width: min(420px, calc(100% - 28px)); padding: 0; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); box-shadow: 0 20px 70px #111c1633; }
+    dialog::backdrop { background: #14251f70; backdrop-filter: blur(3px); }
+    .dialog-inner { padding: 22px; }
+    .dialog-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+    .dialog-head h2 { margin: 0 0 5px; font: 600 18px "Space Grotesk", sans-serif; }
+    .dialog-head p { margin: 0; color: var(--muted); font-size: 11px; }
+    .dialog-close { width: 29px; height: 29px; border: 1px solid var(--line); border-radius: 7px; background: white; color: #59655c; }
+    .field { display: grid; gap: 7px; margin: 14px 0; color: #5e6a61; font-size: 11px; font-weight: 600; }
+    .field input, .field select { width: 100%; height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; outline: 0; background: white; color: var(--ink); font-size: 12px; }
+    .field input:focus, .field select:focus { border-color: #9cbe6d; box-shadow: 0 0 0 3px #c8f07838; }
+    .field-hint { color: #89948b; font-size: 10px; font-weight: 400; }
+    .dialog-note { padding: 10px; margin: 15px 0; border-radius: 7px; background: #f2f5ef; color: #657268; font-size: 10px; line-height: 1.5; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 19px; }
+    .receive-address { padding: 12px; border: 1px dashed #c8d2c7; border-radius: 7px; color: #536057; background: #f7f9f5; font: 11px monospace; overflow-wrap: anywhere; }
+    .mobile-menu { display: none; }
+    @media (max-width: 960px) {
+      .app { grid-template-columns: 195px minmax(0, 1fr); }
+      .topbar { padding: 0 24px; }
+      .content { padding: 28px 24px 38px; }
+      .overview-grid { grid-template-columns: minmax(0, 1.35fr) minmax(235px, .9fr); }
+      .asset-grid { gap: 8px; }
+      .asset-card { padding: 12px 10px; }
+    }
+    @media (max-width: 720px) {
+      .app { display: block; }
+      .sidebar { display: none; }
+      .topbar { height: 58px; padding: 0 16px; }
+      .mobile-menu { display: grid; place-items: center; width: 32px; height: 32px; margin-right: 9px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--ink); }
+      .crumb-group { display: flex; align-items: center; }
+      .crumb { font-size: 11px; }
+      .network { padding: 7px; font-size: 10px; }
+      .network-mark { width: 7px; height: 7px; }
+      .icon-button { width: 31px; height: 31px; }
+      .content { padding: 25px 16px 32px; }
+      .page-heading { align-items: flex-start; }
+      h1 { font-size: 24px; }
+      .heading-actions { gap: 6px; }
+      .button { min-height: 35px; padding: 0 10px; font-size: 11px; }
+      .overview-grid, .lower-grid { grid-template-columns: 1fr; }
+      .balance-card { min-height: 190px; }
+      .agent-card { padding: 17px; }
+      .asset-grid { grid-template-columns: 1fr; gap: 7px; }
+      .asset-card { padding: 11px 13px; }
+      .lower-grid { gap: 12px; }
+    }
+    @media (max-width: 420px) {
+      .page-heading { display: block; }
+      .heading-actions { margin-top: 15px; }
+      .balance-card { padding: 20px; }
+      .balance-value { font-size: 30px; }
+      .balance-bottom { left: 20px; right: 20px; }
+      .activity-panel { padding: 15px 12px 3px; }
+      .section-heading h2 { font-size: 14px; }
+      .activity-controls { gap: 5px; }
+      .filter-select { padding: 5px 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Main navigation">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">◒</span><span>LUNAR</span></div>
+      <div class="workspace-label">Workspace</div>
+      <nav class="nav">
+        <button class="active" type="button"><span class="nav-icon" aria-hidden="true">▦</span>Overview</button>
+        <button type="button" data-toast="Your assets are shown on the overview."><span class="nav-icon" aria-hidden="true">◈</span>Assets</button>
+        <button type="button" data-toast="All wallet activity is listed below."><span class="nav-icon" aria-hidden="true">↔</span>Transactions</button>
+        <button type="button" data-toast="Agent controls are available in the policy panel."><span class="nav-icon" aria-hidden="true">✳</span>AI agent <span class="nav-count">●</span></button>
+        <button type="button" data-toast="Team access is not enabled in this demo."><span class="nav-icon" aria-hidden="true">♧</span>Team</button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="agent-status">
+        <div class="agent-status-top"><span id="sidebar-wallet-state"><i class="status-dot"></i>Wallet locked</span><span aria-hidden="true">···</span></div>
+        <p>Your recovery phrase stays in your wallet. The app never signs for you.</p>
+        <button class="status-link" type="button" data-scroll="agent-policy">View signing policy <span aria-hidden="true">→</span></button>
+      </div>
+      <div class="profile"><div class="avatar" aria-hidden="true">◒</div><div><div class="profile-name" id="profile-name">No wallet connected</div><div class="profile-role">Base mainnet · self-custody</div></div></div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div class="crumb-group"><button class="mobile-menu" type="button" aria-label="Open navigation" data-toast="Navigation is available in the desktop sidebar.">☰</button><div class="crumb">Workspace <span aria-hidden="true">/</span> <strong>Overview</strong></div></div>
+        <div class="top-actions"><div class="network"><i class="network-mark" aria-hidden="true"></i><span id="network-label">Base mainnet</span></div><button class="button button-primary" type="button" id="connect-button">Connect wallet</button></div>
+      </header>
+
+      <div class="content">
+        <section class="page-heading">
+          <div><p class="eyebrow">BASE MAINNET · SELF-CUSTODY</p><h1>Wallet overview</h1><p class="subtitle">Live assets with approval-required agent drafts.</p></div>
+          <div class="heading-actions"><button class="button" type="button" data-open="receive-dialog" id="receive-open" disabled><span aria-hidden="true">↓</span> Receive</button><button class="button button-primary" type="button" data-open="send-dialog" id="send-open" disabled><span aria-hidden="true">↗</span> Send funds</button></div>
+        </section>
+
+        <div class="security-banner"><span aria-hidden="true">ⓘ</span><span><strong>Real network · real funds.</strong> Every transfer opens your wallet for review and approval. Never enter a seed phrase here.</span></div>
+
+        <section class="overview-grid" aria-label="Wallet summary and agent policy">
+          <article class="balance-card">
+            <div class="balance-label">Estimated wallet value</div>
+            <div class="balance-value" id="total-balance">Connect wallet</div>
+            <div class="balance-change" id="price-note">Live balances · USD estimate loading</div>
+            <div class="balance-bottom"><span>Wallet · <span id="address-short">Not connected</span></span><button class="status-link" type="button" id="copy-address" disabled>Copy address</button></div>
+          </article>
+
+          <article class="agent-card" id="agent-policy">
+            <div class="card-heading"><h2>Signing policy</h2><span class="agent-tag"><i class="status-dot"></i><span id="agent-state">Checking setup</span></span></div>
+            <p>The AI can prepare a transfer draft. It cannot sign or send; your connected wallet must approve every transaction.</p>
+            <div class="policy-row"><span>AI service</span><strong id="agent-service">Checking local server</strong></div>
+            <div class="policy-row"><span>Signer</span><strong>Connected wallet only</strong></div>
+            <div class="policy-row"><span>Supported drafts</span><strong>ETH · USDC</strong></div>
+          </article>
+        </section>
+
+        <section class="assets-section">
+          <div class="section-heading"><h2>Your assets</h2><button class="text-button" type="button" data-toast="Showing all demo assets.">View all <span aria-hidden="true">→</span></button></div>
+          <div class="asset-grid" id="asset-list">
+            <article class="asset-card" data-asset="USDC"><div class="asset-left"><span class="coin coin-usdc" aria-hidden="true">$</span><div><div class="asset-name">USD Coin</div><div class="asset-symbol">USDC · Base</div></div></div><div class="asset-amount"><span class="asset-quantity">—</span><div class="asset-price">Connect wallet</div></div></article>
+            <article class="asset-card" data-asset="ETH"><div class="asset-left"><span class="coin coin-eth" aria-hidden="true">◆</span><div><div class="asset-name">Ethereum</div><div class="asset-symbol">ETH · Base</div></div></div><div class="asset-amount"><span class="asset-quantity">—</span><div class="asset-price">Connect wallet</div></div></article>
+          </div>
+        </section>
+
+        <section class="lower-grid">
+          <article class="activity-panel">
+            <div class="section-heading"><h2>Submitted this session</h2><div class="activity-controls"><select class="filter-select" id="activity-filter" aria-label="Filter activity"><option value="all">All activity</option><option value="sent">Sent</option></select></div></div>
+            <div id="activity-list" aria-live="polite"></div>
+          </article>
+          <article class="copilot-panel">
+            <div class="copilot-title"><span class="copilot-mark" aria-hidden="true">✳</span><div><h2>Wallet agent</h2><small id="agent-subtitle">Checking local AI configuration</small></div></div>
+            <div class="chat-log" id="chat-log" aria-live="polite"><div class="message">Connect your wallet and configure the local AI key to request a transfer draft. Every draft needs your approval.</div></div>
+            <form class="chat-form" id="chat-form"><input id="chat-input" aria-label="Ask wallet copilot" placeholder="Ask about your wallet…" autocomplete="off"><button class="send-chat" type="submit" aria-label="Send message">↑</button></form>
+          </article>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="send-dialog" aria-labelledby="send-title">
+    <form class="dialog-inner" id="send-form">
+      <div class="dialog-head"><div><h2 id="send-title">Review transfer</h2><p>Check the details before your wallet opens.</p></div><button class="dialog-close" type="button" aria-label="Close" data-close>×</button></div>
+      <label class="field">Asset<select id="send-asset"><option value="USDC">USDC · USD Coin</option><option value="ETH">ETH · Base</option></select><span class="field-hint" id="available-hint">Connect a wallet to load balance.</span></label>
+      <label class="field">Recipient address<input id="recipient" placeholder="0x followed by 40 hex characters" autocomplete="off" autocapitalize="off" spellcheck="false" required minlength="42" maxlength="42" pattern="0x[a-fA-F0-9]{40}" title="Enter a valid 42-character EVM address"></label>
+      <label class="field">Amount<input id="send-amount" type="number" placeholder="0.00" min="0.00000001" step="any" required></label>
+      <div class="dialog-note">Your wallet will display the transaction for final review and signing. Check the recipient and amount there too. Network gas fees apply.</div>
+      <div class="dialog-actions"><button class="button" type="button" data-close>Cancel</button><button class="button button-primary" type="submit" id="confirm-send">Continue to wallet</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="receive-dialog" aria-labelledby="receive-title">
+    <div class="dialog-inner">
+      <div class="dialog-head"><div><h2 id="receive-title">Receive funds</h2><p>Your connected wallet address on Base.</p></div><button class="dialog-close" type="button" aria-label="Close" data-close>×</button></div>
+      <div class="receive-address" id="receive-address">Connect your wallet first.</div>
+      <div class="dialog-note">Only send assets supported on Base to this address. Transfers on other networks may be lost.</div>
+      <div class="dialog-actions"><button class="button" type="button" data-close>Close</button><button class="button button-primary" type="button" id="copy-receive">▢ Copy address</button></div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const assetPrices = { USDC: 1, ETH: 3276.36, SOL: 163.795 };
+    const balances = { USDC: 14000, ETH: 2.14, SOL: 22.4 };
+    const assetNames = { USDC: "USD Coin", ETH: "Ethereum", SOL: "Solana" };
+    const activity = [
+      { type: "received", icon: "↓", title: "Received USDC", meta: "From 0x8a3...f21c · 2 hours ago", amount: "+$250.00", value: 250 },
+      { type: "sent", icon: "↗", title: "Sent ETH", meta: "To 0x4b1...a09e · Yesterday", amount: "−0.08 ETH", value: 0.08 },
+      { type: "agent", icon: "✳", title: "Agent prepared a swap", meta: "USDC → ETH · Needs your approval", amount: "Review", value: null, pending: true },
+      { type: "received", icon: "↓", title: "Received SOL", meta: "From 0x91d...38aa · Oct 9", amount: "+1.2 SOL", value: 1.2 }
+    ];
+    let dailyLimit = 500;
+    let toastTimer;
+
+    const formatUsd = (amount) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }).format(amount);
+    const formatQuantity = (amount, symbol) => `${new Intl.NumberFormat("en-US", { maximumFractionDigits: symbol === "USDC" ? 2 : 6 }).format(amount)} ${symbol}`;
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+    function showToast(message) {
+      const toast = document.querySelector("#toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("visible"), 2600);
+    }
+    function setConnectionUI() {
+      const connected = Boolean(walletAddress);
+      const onBase = isOnBase();
+      document.querySelector("#connect-button").textContent = connected ? shortAddress(walletAddress) : "Connect wallet";
+      document.querySelector("#send-open").disabled = !connected || !onBase;
+      document.querySelector("#receive-open").disabled = !connected;
+      document.querySelector("#copy-address").disabled = !connected;
+      document.querySelector("#network-label").textContent = onBase ? "Base mainnet" : connected ? "Switch to Base" : "Base mainnet";
+      document.querySelector("#address-short").textContent = shortAddress(walletAddress);
+      document.querySelector("#receive-address").textContent = walletAddress || "Connect your wallet first.";
+      document.querySelector("#sidebar-wallet-state").innerHTML = `<i class="status-dot"></i>${connected ? onBase ? "Wallet connected" : "Wrong network" : "Wallet locked"}`;
+      document.querySelector("#profile-name").textContent = connected ? shortAddress(walletAddress) : "No wallet connected";
+      if (!connected) document.querySelector("#total-balance").textContent = "Connect wallet";
+      else if (!onBase) document.querySelector("#total-balance").textContent = "Switch to Base";
+      renderBalances();
+    }
+    function renderBalances() {
+      const ready = Boolean(walletAddress && isOnBase());
+      let eth = 0;
+      let usdc = 0;
+      if (ready) {
+        eth = Number(formatUnits(balances.ETH, DECIMALS.ETH));
+        usdc = Number(formatUnits(balances.USDC, DECIMALS.USDC));
+      }
+      document.querySelector('[data-asset="ETH"] .asset-quantity').textContent = ready ? new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(eth) : "—";
+      document.querySelector('[data-asset="USDC"] .asset-quantity').textContent = ready ? new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(usdc) : "—";
+      document.querySelector('[data-asset="ETH"] .asset-price').textContent = ready && ethPrice ? formatUsd(eth * ethPrice) : ready ? "USD quote unavailable" : "Connect wallet";
+      document.querySelector('[data-asset="USDC"] .asset-price').textContent = ready ? formatUsd(usdc) : "Connect wallet";
+      document.querySelector("#total-balance").textContent = ready && ethPrice ? formatUsd(eth * ethPrice + usdc) : ready ? "Quote unavailable" : walletAddress ? "Switch to Base" : "Connect wallet";
+      document.querySelector("#price-note").textContent = ethPrice ? "Live balances · Coinbase ETH spot estimate" : "Live balances · USD quote unavailable";
+      updateAvailableHint();
+    }
+    function renderActivity(filter = "all") {
+      const items = activity.filter((item) => filter === "all" || item.type === filter);
+      const list = document.querySelector("#activity-list");
+      list.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement("div");
+        empty.className = "activity-empty";
+        empty.textContent = walletAddress ? "No transfers submitted in this session." : "Connect your wallet to get started.";
+        list.append(empty);
+        return;
+      }
+      for (const item of items) {
+        const row = document.createElement("div");
+        row.className = "activity-row";
+        const icon = document.createElement("div");
+        icon.className = "activity-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = "↗";
+        const details = document.createElement("div");
+        const title = document.createElement("div");
+        title.className = "activity-title";
+        title.textContent = item.title;
+        const meta = document.createElement("div");
+        meta.className = "activity-meta";
+        meta.textContent = item.meta;
+        if (item.hash) {
+          const link = document.createElement("a");
+          link.href = `https://basescan.org/tx/${item.hash}`;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = " · BaseScan";
+          meta.append(link);
+        }
+        details.append(title, meta);
+        const amount = document.createElement("div");
+        amount.className = "activity-amount";
+        amount.textContent = item.amount;
+        row.append(icon, details, amount);
+        list.append(row);
+      }
+    }
+    function updateAvailableHint() {
+      const symbol = document.querySelector("#send-asset").value;
+      const connected = walletAddress && isOnBase();
+      document.querySelector("#available-hint").textContent = connected ? `Available: ${formatQuantity(balances[symbol], symbol)}` : "Connect a wallet on Base to load balance.";
+      document.querySelector("#send-amount").max = connected ? formatUnits(balances[symbol], DECIMALS[symbol]) : "";
+    }
+    function openDialog(id) { document.getElementById(id).showModal(); }
+    async function copyText(value) {
+      try {
+        await navigator.clipboard.writeText(value);
+        showToast("Copied to clipboard.");
+      } catch {
+        showToast(`Clipboard unavailable: ${shortAddress(value)}`);
+      }
+    }
+    async function switchToBase() {
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_ID }] });
+      } catch (error) {
+        if (error.code !== 4902) throw error;
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: BASE_CHAIN_ID,
+            chainName: "Base",
+            nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+            rpcUrls: ["https://mainnet.base.org"],
+            blockExplorerUrls: ["https://basescan.org"]
+          }]
+        });
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_ID }] });
+      }
+      chainId = await window.ethereum.request({ method: "eth_chainId" });
+      if (!isOnBase()) throw new Error("Switch your wallet to Base mainnet to continue.");
+      setConnectionUI();
+    }
+    async function readBalances() {
+      if (!walletAddress || !isOnBase()) throw new Error("Connect a wallet on Base mainnet first.");
+      const [ethHex, usdcHex] = await Promise.all([
+        window.ethereum.request({ method: "eth_getBalance", params: [walletAddress, "latest"] }),
+        window.ethereum.request({ method: "eth_call", params: [{ to: USDC_ADDRESS, data: `0x70a08231${walletAddress.slice(2).toLowerCase().padStart(64, "0")}` }, "latest"] })
+      ]);
+      return { ETH: BigInt(ethHex), USDC: BigInt(usdcHex) };
+    }
+    async function refreshBalances() {
+      if (!walletAddress || !isOnBase()) return;
+      try {
+        const fresh = await readBalances();
+        balances.ETH = fresh.ETH;
+        balances.USDC = fresh.USDC;
+        renderBalances();
+      } catch (error) {
+        showToast(error.message || "Could not read balances from Base.");
+      }
+    }
+    async function loadEthPrice() {
+      try {
+        const response = await fetch("/api/eth-price");
+        if (!response.ok) throw new Error("Quote unavailable");
+        const result = await response.json();
+        if (!Number.isFinite(result.usd) || result.usd <= 0) throw new Error("Invalid quote");
+        ethPrice = result.usd;
+      } catch {
+        ethPrice = null;
+      }
+      renderBalances();
+    }
+    async function connectWallet() {
+      if (!window.ethereum) {
+        showToast("Install MetaMask or another EIP-1193 wallet to connect.");
+        return;
+      }
+      try {
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+        walletAddress = accounts[0] || null;
+        if (!walletAddress) throw new Error("No wallet account was selected.");
+        chainId = await window.ethereum.request({ method: "eth_chainId" });
+        setConnectionUI();
+        if (!isOnBase()) await switchToBase();
+        await refreshBalances();
+        renderActivity(document.querySelector("#activity-filter").value);
+      } catch (error) {
+        setConnectionUI();
+        showToast(error.code === 4001 ? "Wallet connection was rejected." : error.message || "Could not connect wallet.");
+      }
+    }
+    function appendMessage(text, isUser = false) {
+      const message = document.createElement("div");
+      message.className = `message${isUser ? " user" : ""}`;
+      message.textContent = text;
+      document.querySelector("#chat-log").append(message);
+      return message;
+    }
+    function addAgentDraft(parent, action) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button button-primary";
+      button.textContent = `Review ${action.amount} ${action.asset} transfer`;
+      button.addEventListener("click", () => {
+        if (!walletAddress || !isOnBase()) {
+          showToast("Connect a wallet on Base before reviewing a transfer.");
+          return;
+        }
+        document.querySelector("#send-asset").value = action.asset;
+        document.querySelector("#recipient").value = action.recipient;
+        document.querySelector("#send-amount").value = action.amount;
+        updateAvailableHint();
+        openDialog("send-dialog");
+      });
+      parent.append(button);
+    }
+
+    document.querySelectorAll("[data-open]").forEach((button) => button.addEventListener("click", () => openDialog(button.dataset.open)));
+    document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
+    document.querySelectorAll("[data-toast]").forEach((button) => button.addEventListener("click", () => showToast(button.dataset.toast)));
+    document.querySelector("[data-scroll]").addEventListener("click", () => document.getElementById("agent-policy").scrollIntoView({ behavior: "smooth", block: "center" }));
+    document.querySelector("#connect-button").addEventListener("click", connectWallet);
+    document.querySelector("#copy-address").addEventListener("click", () => walletAddress && copyText(walletAddress));
+    document.querySelector("#copy-receive").addEventListener("click", () => walletAddress && copyText(walletAddress));
+    document.querySelector("#send-asset").addEventListener("change", updateAvailableHint);
+    document.querySelector("#activity-filter").addEventListener("change", (event) => renderActivity(event.target.value));
+
+    document.querySelector("#send-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!walletAddress || !window.ethereum) return showToast("Connect your wallet before sending.");
+      const submit = document.querySelector("#confirm-send");
+      submit.disabled = true;
+      const symbol = document.querySelector("#send-asset").value;
+      const amountText = document.querySelector("#send-amount").value;
+      const recipient = document.querySelector("#recipient").value.trim();
+      try {
+        if (!isOnBase()) {
+          await switchToBase();
+          await refreshBalances();
+          showToast("Base selected. Review the transfer and continue again.");
+          return;
+        }
+        if (!isValidAddress(recipient)) throw new Error("Enter a valid Base EVM address.");
+        const amount = decimalToUnits(amountText, DECIMALS[symbol]);
+        if (amount <= 0n) throw new Error("Enter an amount greater than zero.");
+        const latest = await readBalances();
+        balances.ETH = latest.ETH;
+        balances.USDC = latest.USDC;
+        renderBalances();
+        if (amount > latest[symbol]) throw new Error("Amount exceeds the current on-chain balance.");
+        const transaction = { from: walletAddress };
+        if (symbol === "ETH") {
+          transaction.to = recipient;
+          transaction.value = `0x${amount.toString(16)}`;
+        } else {
+          transaction.to = USDC_ADDRESS;
+          transaction.data = `0xa9059cbb${recipient.slice(2).toLowerCase().padStart(64, "0")}${amount.toString(16).padStart(64, "0")}`;
+        }
+        const hash = await window.ethereum.request({ method: "eth_sendTransaction", params: [transaction] });
+        activity.unshift({ type: "sent", title: `Sent ${symbol}`, meta: `To ${shortAddress(recipient)} · Submitted just now`, amount: `−${formatQuantity(amount, symbol)}`, hash });
+        renderActivity(document.querySelector("#activity-filter").value);
+        event.target.closest("dialog").close();
+        event.target.reset();
+        showToast("Transaction submitted. Check its status on BaseScan.");
+        await refreshBalances();
+      } catch (error) {
+        showToast(error.code === 4001 ? "Transaction rejected in your wallet." : error.message || "Transaction could not be submitted.");
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    document.querySelector("#chat-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = document.querySelector("#chat-input");
+      const text = input.value.trim();
+      if (!text) return;
+      const log = document.querySelector("#chat-log");
+      input.value = "";
+      appendMessage(text, true);
+      const sendButton = event.submitter;
+      sendButton.disabled = true;
+      try {
+        const response = await fetch("/api/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            walletAddress,
+            balances: {
+              ETH: walletAddress && isOnBase() ? formatUnits(balances.ETH, DECIMALS.ETH) : "unknown",
+              USDC: walletAddress && isOnBase() ? formatUnits(balances.USDC, DECIMALS.USDC) : "unknown"
+            }
+          })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Agent request failed.");
+        const agentMessage = appendMessage(result.reply || "No response received.");
+        if (result.action?.type === "transfer" && ["ETH", "USDC"].includes(result.action.asset) && isValidAddress(result.action.recipient) && typeof result.action.amount === "string") {
+          addAgentDraft(agentMessage, result.action);
+        }
+      } catch (error) {
+        appendMessage(error.message || "Could not reach the local agent service.");
+      } finally {
+        sendButton.disabled = false;
+        log.scrollTop = log.scrollHeight;
+      }
+    });
+
+    async function checkAgentConfiguration() {
+      try {
+        const response = await fetch("/api/config");
+        const config = await response.json();
+        agentConfigured = Boolean(config.agentConfigured);
+      } catch {
+        agentConfigured = false;
+      }
+      document.querySelector("#agent-state").textContent = agentConfigured ? "Ready" : "Key needed";
+      document.querySelector("#agent-service").textContent = agentConfigured ? "Configured · drafts only" : "Add server-side API key";
+      document.querySelector("#agent-subtitle").textContent = agentConfigured ? "AI drafts · wallet approval required" : "Add OPENAI_API_KEY to enable drafts";
+    }
+    if (window.ethereum) {
+      window.ethereum.on?.("accountsChanged", (accounts) => {
+        walletAddress = accounts[0] || null;
+        setConnectionUI();
+        refreshBalances();
+        renderActivity(document.querySelector("#activity-filter").value);
+      });
+      window.ethereum.on?.("chainChanged", (nextChainId) => {
+        chainId = nextChainId;
+        setConnectionUI();
+        refreshBalances();
+      });
+      window.ethereum.request({ method: "eth_accounts" }).then(async (accounts) => {
+        walletAddress = accounts[0] || null;
+        chainId = await window.ethereum.request({ method: "eth_chainId" });
+        setConnectionUI();
+        await refreshBalances();
+        renderActivity();
+      }).catch(() => setConnectionUI());
+    }
+    setConnectionUI();
+    renderActivity();
+    checkAgentConfiguration();
+    loadEthPrice();
+  </script>
+</body>
+</html>
